@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -11,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -104,7 +106,7 @@ public final class MainActivity extends Activity {
         open.setOnClickListener(view -> openDouyin());
         add(body, open, 18);
 
-        TextView usage = text("首次使用\n在 LSPosed / Vector 中启用本模块，作用域选择「抖音」，再强行停止并重新打开抖音。", 13, SECONDARY);
+        TextView usage = text("首次使用\n在 LSPosed / Vector 中启用本模块，作用域选择「抖音」，再强行停止并重新打开抖音。手机重启后，先打开一次本模块，再打开抖音。", 13, SECONDARY);
         usage.setLineSpacing(dp(7), 1f);
         add(body, usage, 28);
         TextView privacy = text("仅本地展示过滤 · 无联网权限\n无匹配时显示 0；后续加载到的评论也会继续过滤。", 12, SECONDARY);
@@ -117,6 +119,8 @@ public final class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(ConfigProvider.PREFS, 0);
         uid.setText(prefs.getString("uid", ""));
         enabled.setChecked(prefs.getBoolean("enabled", false));
+        String accessError = grantDouyinReadAccess();
+        if (accessError != null) feedback.setText(accessError);
     }
 
     private int assignId(View view) { int id = View.generateViewId(); view.setId(id); return id; }
@@ -145,7 +149,9 @@ public final class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(ConfigProvider.PREFS, 0);
         prefs.edit().putString("uid", value).putBoolean("enabled", enabled.isChecked())
             .putLong("revision", prefs.getLong("revision", 0L) + 1L).apply();
-        feedback.setText(enabled.isChecked() ? "已保存。重新打开评论区后，只展示这个 UID。" : "过滤已关闭。重新打开评论区恢复原始展示。");
+        String accessError = grantDouyinReadAccess();
+        feedback.setText(accessError != null ? "已保存。" + accessError : enabled.isChecked()
+                ? "已保存。重新打开评论区后，只展示这个 UID。" : "过滤已关闭。重新打开评论区恢复原始展示。");
         feedback.setTextColor(ACCENT);
         uid.clearFocus();
         android.view.inputmethod.InputMethodManager keyboard = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
@@ -155,8 +161,26 @@ public final class MainActivity extends Activity {
     private void openDouyin() {
         Intent intent = getPackageManager().getLaunchIntentForPackage(ConfigProvider.TARGET);
         if (intent == null) { Toast.makeText(this, "尚未安装抖音", Toast.LENGTH_SHORT).show(); return; }
+        String accessError = grantDouyinReadAccess();
+        if (accessError != null) { Toast.makeText(this, accessError, Toast.LENGTH_SHORT).show(); return; }
         try { startActivity(intent); }
         catch (ActivityNotFoundException exception) { Toast.makeText(this, "无法打开抖音", Toast.LENGTH_SHORT).show(); }
+    }
+
+    /** Makes this provider visible to the host on Android 11+, without granting write access. */
+    private String grantDouyinReadAccess() {
+        try {
+            getPackageManager().getApplicationInfo(ConfigProvider.TARGET, 0);
+            grantUriPermission(ConfigProvider.TARGET, ConfigProvider.URI,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            return null;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            return "尚未安装抖音；安装后重新打开本模块。";
+        } catch (SecurityException | IllegalArgumentException exception) {
+            Log.w("DouyinUidFilter", "Provider visibility grant failed: "
+                    + exception.getClass().getSimpleName());
+            return "暂时无法连接抖音；请重新打开本模块后再试。";
+        }
     }
 
     private TextView text(String value, float size, int color) {

@@ -24,6 +24,6 @@
         <!-- The provider checks Binder.getCallingUid() before all configuration operations. -->
         <provider android:name=".ConfigProvider" tools:ignore="ExportedContentProvider"
             android:authorities="io.github.lightjunction.douyinuidfilter.settings"
-            android:exported="true" android:grantUriPermissions="false" />
+            android:exported="true" android:grantUriPermissions="true" />
     </application>
 </manifest>
