@@ -1,0 +1,48 @@
+plugins { id 'com.android.application' }
+
+def releaseVersion = new Properties()
+rootProject.file('version.properties').withInputStream { releaseVersion.load(it) }
+def signingPath = System.getenv('ANDROID_KEYSTORE_PATH')
+
+android {
+    namespace 'io.github.lightjunction.douyinuidfilter'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'io.github.lightjunction.douyinuidfilter'
+        minSdk 27
+        targetSdk 35
+        versionCode releaseVersion.getProperty('VERSION_CODE').toInteger()
+        versionName releaseVersion.getProperty('VERSION_NAME')
+    }
+    signingConfigs {
+        if (signingPath) {
+            release {
+                storeFile file(signingPath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            if (signingPath) signingConfig signingConfigs.release
+        }
+        release {
+            minifyEnabled false
+            if (signingPath) signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildFeatures { buildConfig true }
+    lint { abortOnError true }
+}
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+    testImplementation 'junit:junit:4.13.2'
+}

@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version change (none publishes the current version)
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major, custom, none]
+      custom_version:
+        description: Exact MAJOR.MINOR.PATCH when bump is custom
+        required: false
+        type: string
+      prerelease:
+        description: Mark this version as a prerelease awaiting validation
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Check release inputs and signing configuration
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo 'Run a version bump from the default branch.' >&2
+            exit 1
+          fi
+          for key in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!key}" ]]; then
+              echo "Missing repository secret: $key" >&2
+              exit 1
+            fi
+          done
+          python3 -m unittest discover -s scripts -p 'test_bump_version.py' -v
+
+      - name: Prepare version and release tag
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BUMP: ${{ inputs.bump }}
+          CUSTOM_VERSION: ${{ inputs.custom_version }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == push ]]; then
+            python3 scripts/bump_version.py none --expect-tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
+            echo 'push_required=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A failed run can be retried without incrementing the version a second time.
+          previous="$(git log --all -1 --format=%H --grep="^Release-Run: $GITHUB_RUN_ID$")"
+          if [[ -n "$previous" ]]; then
+            git checkout --detach "$previous"
+            python3 scripts/bump_version.py none --github-output "$GITHUB_OUTPUT"
+            tag="$(python3 scripts/bump_version.py none | sed -n 's/^tag=//p')"
+            test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse HEAD)"
+            echo 'push_required=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          args=("${BUMP:-none}" --github-output "$GITHUB_OUTPUT")
+          if [[ -n "$CUSTOM_VERSION" ]]; then
+            args+=(--custom-version "$CUSTOM_VERSION")
+          fi
+          python3 scripts/bump_version.py "${args[@]}"
+          tag="$(python3 scripts/bump_version.py none | sed -n 's/^tag=//p')"
+          if ! git diff --quiet -- version.properties; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add version.properties
+            git commit -m "chore: release $tag" -m "Release-Run: $GITHUB_RUN_ID"
+          fi
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse HEAD)" || {
+              echo 'This release tag already points at another commit. Choose a new version.' >&2
+              exit 1
+            }
+            echo 'push_required=false' >> "$GITHUB_OUTPUT"
+          else
+            git tag "$tag"
+            echo 'push_required=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Install Android SDK components
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Test and build signed APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/douyin-uid-filter-release.jks
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          gradle --no-daemon --console=plain test assembleRelease lintRelease
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+
+      - name: Push validated version and tag
+        if: github.event_name == 'workflow_dispatch' && steps.version.outputs.push_required == 'true'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          git push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "refs/tags/$RELEASE_TAG"
+
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.name }}
+          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+        run: |
+          set -euo pipefail
+          apk="$RUNNER_TEMP/douyin-uid-filter-v$RELEASE_VERSION.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$apk"
+          if gh release view "$RELEASE_TAG" --json isDraft,assets > "$RUNNER_TEMP/douyin-uid-filter-release.json" 2>/dev/null; then
+            if [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["isDraft"])' "$RUNNER_TEMP/douyin-uid-filter-release.json")" == False ]]; then
+              python3 -c 'import json,sys; assets=json.load(open(sys.argv[1]))["assets"]; assert any(a["name"] == sys.argv[2] and a["size"] > 0 for a in assets), "Published release is missing its APK"' "$RUNNER_TEMP/douyin-uid-filter-release.json" "douyin-uid-filter-v$RELEASE_VERSION.apk"
+              echo "Release $RELEASE_TAG is already published; keeping its existing assets."
+              exit 0
+            fi
+          else
+            notes="docs/releases/$RELEASE_TAG.md"
+            release_type=(--prerelease=false)
+            if [[ "$PRERELEASE" == true ]]; then
+              release_type=(--prerelease)
+            fi
+            if [[ -f "$notes" ]]; then
+              gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" "${release_type[@]}" --notes-file "$notes"
+            else
+              gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" "${release_type[@]}" --generate-notes
+            fi
+          fi
+          gh release upload "$RELEASE_TAG" "$apk" --clobber
+          if [[ "$PRERELEASE" == true ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi

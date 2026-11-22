@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">抖音 UID 过滤</string>
+    <string name="module_description">仅展示指定 UID 的抖音评论，在本机完成过滤。</string>
+    <string name="status_connected">已接入抖音 %1$s\n已安装评论过滤钩子，进入评论区后自动生效。</string>
+    <string-array name="xposed_scope"><item>com.ss.android.ugc.aweme</item></string-array>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#101114</item>
+        <item name="android:navigationBarColor">#101114</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowBackground">#101114</item>
+        <item name="android:colorAccent">#A8C7FA</item>
+    </style>
+</resources>
