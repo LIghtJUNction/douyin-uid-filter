@@ -119,7 +119,39 @@ jobs:
           gradle-version: '8.10.2'
 
       - name: Install Android SDK components
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$RUNNER_TEMP/android-sdk}}"
+          sdkmanager_path="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager_path" ]]; then
+            for candidate in "$sdk_root"/cmdline-tools/*/bin/sdkmanager; do
+              if [[ -x "$candidate" ]]; then
+                sdkmanager_path="$candidate"
+                break
+              fi
+            done
+          fi
+          if [[ ! -x "$sdkmanager_path" ]]; then
+            sdk_root="$RUNNER_TEMP/android-sdk"
+            bootstrap_dir="$(mktemp -d "$RUNNER_TEMP/android-tools.XXXXXX")"
+            trap 'rm -rf "$bootstrap_dir"' EXIT
+            archive="$bootstrap_dir/commandline-tools.zip"
+            curl --fail --location --retry 3 --connect-timeout 20 \
+              --output "$archive" \
+              'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip'
+            printf '%s  %s\n' '2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258' "$archive" | sha256sum --check --status
+            unzip -q "$archive" -d "$bootstrap_dir/unpacked"
+            mkdir -p "$sdk_root/cmdline-tools"
+            mv "$bootstrap_dir/unpacked/cmdline-tools" "$sdk_root/cmdline-tools/12.0"
+            sdkmanager_path="$sdk_root/cmdline-tools/12.0/bin/sdkmanager"
+          fi
+          export ANDROID_HOME="$sdk_root" ANDROID_SDK_ROOT="$sdk_root"
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk_root" "$sdk_root" >> "$GITHUB_ENV"
+          # yes may receive SIGPIPE once sdkmanager has accepted every license.
+          set +o pipefail
+          yes | "$sdkmanager_path" --sdk_root="$sdk_root" --licenses > /dev/null
+          set -o pipefail
+          "$sdkmanager_path" --sdk_root="$sdk_root" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Test and build signed APK
         env:
