@@ -1,6 +1,9 @@
 package io.github.lightjunction.douyinuidfilter;
 
 import android.app.Application;
+import android.app.Activity;
+import android.view.Menu;
+import android.view.Window;
 import android.content.Context;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -19,8 +22,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class ModuleEntry implements IXposedHookLoadPackage {
     private static final String TAG = "DouyinUidFilter";
     private final AtomicBoolean installed = new AtomicBoolean();
-    private volatile FilterConfig config = FilterConfig.DISABLED;
-    private volatile long lastRead;
+    private final ConfigurationReader configurationReader = new ConfigurationReader();
+    private String reportedConfiguration = "pending";
+    private boolean adapterReady;
+    private int installedHooks;
+    private String hostVersion = "unknown";
     private Context context;
     private HostAdapter adapter;
     private final WeakIdentityMap<FilterSession> requestSessions = new WeakIdentityMap<>();
@@ -39,18 +45,26 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
     }
 
     private synchronized FilterConfig configuration() {
-        long now = SystemClock.elapsedRealtime();
-        if (lastRead != 0 && now - lastRead < 500) return config;
-        lastRead = now;
-        try {
-            Bundle values = context.getContentResolver().call(ConfigProvider.URI, "get", null, null);
-            if (values == null) throw new IllegalStateException("Configuration provider returned no data");
-            config = new FilterConfig(values.getBoolean("enabled"), values.getString("uid", ""), values.getLong("revision"));
-        } catch (RuntimeException exception) {
-            // Retain the last valid setting on transient IPC failure, and make the failure visible.
-            error("configuration", exception);
+        FilterConfig selected = configurationReader.read(SystemClock.elapsedRealtime(), () -> {
+            try {
+                Bundle values = context.getContentResolver().call(ConfigProvider.URI, "get", null, null);
+                if (values == null) throw new IllegalStateException("Configuration provider returned no data");
+                return new FilterConfig(values.getBoolean("enabled"), values.getString("uids", values.getString("uid", "")), values.getLong("revision"));
+            } catch (RuntimeException exception) {
+                error("configuration", exception);
+                throw exception;
+            }
+        });
+        String state = configurationReader.state();
+        if (!state.equals(reportedConfiguration)) {
+            reportedConfiguration = state;
+            // Fixed vocabulary only; never include configuration values or exception messages.
+            String message = TAG + ": configuration=" + state;
+            Log.i(TAG, message);
+            XposedBridge.log(message);
+            report(adapterReady, installedHooks, hostVersion);
         }
-        return config;
+        return selected;
     }
 
     private void install(ClassLoader loader) {
@@ -164,6 +178,21 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
                     hooks++;
                 }
             }
+            // Only append to an existing Android options menu. Custom host menus
+            // need version-specific validation and remain untouched.
+            try {
+                XposedHelpers.findAndHookMethod(Activity.class, "onCreatePanelMenu", int.class, Menu.class,
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam param) {
+                                if (!param.hasThrowable() && Boolean.TRUE.equals(param.getResult())
+                                        && ((Integer) param.args[0]) == Window.FEATURE_OPTIONS_PANEL) {
+                                    try { HostSettingsEntry.addTo((Activity) param.thisObject, (Menu) param.args[1]); }
+                                    catch (RuntimeException unavailable) { error("settings entry", unavailable); }
+                                }
+                            }
+                        });
+                hooks++;
+            } catch (RuntimeException unavailable) { error("settings entry installation", unavailable); }
             report(true, hooks, version);
             XposedBridge.log(TAG + ": ready, host=" + version + ", hooks=" + hooks);
         } catch (Throwable exception) {
@@ -173,8 +202,10 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
     }
 
     private void report(boolean ready, int hooks, String version) {
+        adapterReady = ready; installedHooks = hooks; hostVersion = version;
         try {
             Bundle data = new Bundle(); data.putBoolean("ready", ready);
+            data.putString("configuration", configurationReader.state());
             data.putInt("hooks", hooks); data.putString("version", version);
             context.getContentResolver().call(ConfigProvider.URI, "report", null, data);
         } catch (RuntimeException exception) { error("module status", exception); }
