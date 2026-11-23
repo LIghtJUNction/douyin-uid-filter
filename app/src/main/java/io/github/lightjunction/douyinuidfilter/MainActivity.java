@@ -133,7 +133,17 @@ public final class MainActivity extends Activity {
         if (last == 0L) {
             status.setText("等待接入抖音\n启用作用域后，打开一次抖音以检查模块状态。");
         } else if (diagnostics.getBoolean("ready", false)) {
-            status.setText(getString(R.string.status_connected, diagnostics.getString("version", "")));
+            String configuration = diagnostics.getString("configuration", "pending");
+            String detail;
+            switch (configuration) {
+                case "enabled": detail = "配置已读取：过滤已启用"; break;
+                case "disabled": detail = "配置已读取：过滤已关闭或 UID 无效"; break;
+                case "cached": detail = "配置读取暂时失败：沿用本进程上次配置"; break;
+                case "unavailable": detail = "尚未读取到配置：本进程未启用过滤；请打开模块后重试"; break;
+                default: detail = "配置状态未知：请查看模块日志";
+            }
+            status.setText(getString(R.string.status_record,
+                    getString(R.string.status_connected, diagnostics.getString("version", "")), detail));
         } else {
             status.setText("当前抖音版本适配失败\n请查看 Xposed 模块日志，暂勿依赖过滤结果。");
         }

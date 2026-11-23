@@ -19,8 +19,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class ModuleEntry implements IXposedHookLoadPackage {
     private static final String TAG = "DouyinUidFilter";
     private final AtomicBoolean installed = new AtomicBoolean();
-    private volatile FilterConfig config = FilterConfig.DISABLED;
-    private volatile long lastRead;
+    private final ConfigurationReader configurationReader = new ConfigurationReader();
+    private String reportedConfiguration = "pending";
+    private boolean adapterReady;
+    private int installedHooks;
+    private String hostVersion = "unknown";
     private Context context;
     private HostAdapter adapter;
     private final WeakIdentityMap<FilterSession> requestSessions = new WeakIdentityMap<>();
@@ -39,18 +42,26 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
     }
 
     private synchronized FilterConfig configuration() {
-        long now = SystemClock.elapsedRealtime();
-        if (lastRead != 0 && now - lastRead < 500) return config;
-        lastRead = now;
-        try {
-            Bundle values = context.getContentResolver().call(ConfigProvider.URI, "get", null, null);
-            if (values == null) throw new IllegalStateException("Configuration provider returned no data");
-            config = new FilterConfig(values.getBoolean("enabled"), values.getString("uid", ""), values.getLong("revision"));
-        } catch (RuntimeException exception) {
-            // Retain the last valid setting on transient IPC failure, and make the failure visible.
-            error("configuration", exception);
+        FilterConfig selected = configurationReader.read(SystemClock.elapsedRealtime(), () -> {
+            try {
+                Bundle values = context.getContentResolver().call(ConfigProvider.URI, "get", null, null);
+                if (values == null) throw new IllegalStateException("Configuration provider returned no data");
+                return new FilterConfig(values.getBoolean("enabled"), values.getString("uid", ""), values.getLong("revision"));
+            } catch (RuntimeException exception) {
+                error("configuration", exception);
+                throw exception;
+            }
+        });
+        String state = configurationReader.state();
+        if (!state.equals(reportedConfiguration)) {
+            reportedConfiguration = state;
+            // Fixed vocabulary only; never include configuration values or exception messages.
+            String message = TAG + ": configuration=" + state;
+            Log.i(TAG, message);
+            XposedBridge.log(message);
+            report(adapterReady, installedHooks, hostVersion);
         }
-        return config;
+        return selected;
     }
 
     private void install(ClassLoader loader) {
@@ -173,8 +184,10 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
     }
 
     private void report(boolean ready, int hooks, String version) {
+        adapterReady = ready; installedHooks = hooks; hostVersion = version;
         try {
             Bundle data = new Bundle(); data.putBoolean("ready", ready);
+            data.putString("configuration", configurationReader.state());
             data.putInt("hooks", hooks); data.putString("version", version);
             context.getContentResolver().call(ConfigProvider.URI, "report", null, data);
         } catch (RuntimeException exception) { error("module status", exception); }

@@ -40,7 +40,13 @@ public final class ConfigProvider extends ContentProvider {
             String version = extras.getString("version", "");
             if (version == null) version = "";
             if (version.length() > 40) version = version.substring(0, 40);
+            String configuration = extras.getString("configuration", "pending");
+            if (!"enabled".equals(configuration) && !"disabled".equals(configuration)
+                    && !"cached".equals(configuration) && !"unavailable".equals(configuration)) {
+                configuration = "pending";
+            }
             getContext().getSharedPreferences(DIAGNOSTICS, 0).edit()
+                .putString("configuration", configuration)
                 .putBoolean("ready", extras.getBoolean("ready", false))
                 .putString("version", version)
                 .putInt("hooks", Math.max(0, extras.getInt("hooks", 0)))
