@@ -33,7 +33,9 @@ public final class ConfigProvider extends ContentProvider {
         if ("get".equals(method)) {
             SharedPreferences prefs = getContext().getSharedPreferences(PREFS, 0);
             result.putBoolean("enabled", prefs.getBoolean("enabled", false));
-            result.putString("uid", prefs.getString("uid", ""));
+            String selected = prefs.getString("uids", prefs.getString("uid", ""));
+            result.putString("uids", selected);
+            result.putString("uid", selected); // Legacy IPC key; updated readers prefer uids.
             result.putLong("revision", prefs.getLong("revision", 0L));
         } else if ("report".equals(method) && extras != null) {
             // Diagnostics are bounded metadata; no comment, video ID, UID or account data is stored.

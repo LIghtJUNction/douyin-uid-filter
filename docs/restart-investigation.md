@@ -32,3 +32,21 @@
 引入 Robolectric 仅用于测试，因此启用 AndroidX 测试依赖支持；产品仍使用原生 Android UI，没有新增产品运行时库或权限。
 
 **验收结论：诊断误报已改善，读取异常后的恢复策略通过夹具测试；用户真实重启故障根因和真实 Android 授权寿命尚未验证，不能认定已修复。** 本轮未运行系统模拟器或真实抖音，也未执行合并、tag、Release 或任何工作流重跑。
+
+## 后续：独立 GitHub 系统验收尝试
+
+新增独立非发布工作流与 test-only APK 构建/矩阵脚本，提交 `92fa37b6f1525fbbd5e246ebff284f71ec0abdf4`。工作流仅 `contents:read`，不读取签名 secrets、不发布、不部署，18 分钟上限；虚拟宿主和未授权调用方各有独立临时签名，实际设置 APK 和测试控制 instrumentation 共用一次性测试签名。测试控制程序不会进入发布 APK。
+
+已启动且仅启动一次：[run 45147038556](https://github.com/LIghtJUNction/douyin-uid-filter/actions/runs/45147038556)，标准 Ubuntu 24.04 runner。KVM 可读写预检失败，日志为 `Runner KVM is unavailable; refusing unsupported software emulation.`。此预检未区分设备缺失与权限不足，不能推广为所有 GitHub runner 不支持 KVM。后续 SDK 安装、APK 构建、模拟器启动、生命周期矩阵均被跳过。未修改 KVM 权限、未重派或重跑，真实系统故障仍未复现。
+
+本地已构建和验签独立测试 APK；这只证明夹具能打包、宿主与设置不同签名，不代表夹具在 Android 系统上通过。下一步需要获准并可实际读写 KVM 的独立测试运行环境。
+
+## 后续：多 UID 与宿主菜单入口
+
+多 UID 每行一个；去除各行首尾空白、忽略空行并去重，数字始终保留字符串精度。任一 UID 命中即保留，复用主评论、回复投影和会话计数；非法非空行拒绝整个编辑。旧 `uid` 设置在没有 `uids` 时回退读取，保存后转为新键，空的新列表不会意外恢复已删除旧值。
+
+宿主入口仅借助公开 Android `Activity.onCreatePanelMenu`，向已有且返回可展示的标准选项菜单追加「UID 评论过滤」，打开已导出的独立设置页。只在原有主抖音进程作用域加载，不申请悬浮窗或其他权限，不遍历/替换私有评论界面。没有标准菜单的版本不显示该入口，保留桌面设置。真实抖音 41.2.0 是否使用此标准菜单尚未验证，不能宣称评论区已有可见入口。
+
+未修改版本属性或 Release 工作流。此功能草稿仍需总控验收，并保留真实宿主和系统重启验证缺口。
+
+多 UID/菜单候选的云端本地结果：`test assembleDebug assembleRelease lintRelease` 成功；Debug、Release 各 75 项测试，0 失败/错误/跳过；版本脚本 7 项通过；Release Lint 无问题；Release APK 仍无权限申请。新增测试包括多 UID 去重与精度、整项非法输入拒绝、删除/切换/关闭、主评论和回复的联合计数、无匹配、配置冷读、旧单 UID 在设置页保留并迁移、菜单去重和打开设置、无菜单/非宿主不修改。Robolectric 测试中调用公开菜单辅助方法，不是 Xposed 或真实抖音渲染验收。

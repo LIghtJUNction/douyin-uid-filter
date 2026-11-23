@@ -40,6 +40,15 @@ public class ConfigProviderAndroidTest {
         assertTrue(loaded.enabled);
         assertEquals(7, loaded.revision);
     }
+    @Test public void multiUidConfigurationSurvivesProviderRecreationAndEmptyListOverridesLegacy() {
+        context.getSharedPreferences(ConfigProvider.PREFS, 0).edit().putBoolean("enabled", true)
+                .putString("uid", "789").putString("uids", "123\n456").commit();
+        provider = Robolectric.buildContentProvider(ConfigProvider.class).create().get();
+        assertTrue(read().matches("123")); assertTrue(read().matches("456"));
+        assertFalse(read().matches("789"));
+        context.getSharedPreferences(ConfigProvider.PREFS, 0).edit().putString("uids", "").commit();
+        assertFalse(read().enabled);
+    }
     @Test public void unauthorizedCallerCannotReadOrReport() {
         ShadowBinder.setCallingUid(Process.myUid() + 10000);
         for (String operation : new String[] {"get", "report"}) {

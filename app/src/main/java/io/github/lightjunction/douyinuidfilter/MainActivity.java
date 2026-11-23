@@ -10,7 +10,6 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.text.InputFilter;
 import android.text.InputType;
 import android.util.Log;
 import android.view.Gravity;
@@ -57,10 +56,10 @@ public final class MainActivity extends Activity {
         TextView brand = text("LOCAL / XPOSED", 12, ACCENT);
         brand.setLetterSpacing(0.16f);
         add(body, brand, 0);
-        TextView title = text("只看这一个人", 32, TEXT);
+        TextView title = text("只看这些人", 32, TEXT);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         add(body, title, 22);
-        TextView subtitle = text("在抖音评论区，留下你指定的 UID。", 15, SECONDARY);
+        TextView subtitle = text("在抖音评论区，留下你指定的用户。", 15, SECONDARY);
         subtitle.setLineSpacing(dp(5), 1f);
         add(body, subtitle, 12);
 
@@ -71,23 +70,25 @@ public final class MainActivity extends Activity {
         enabled.setMinHeight(dp(56));
         enabled.setThumbTintList(new ColorStateList(new int[][] {new int[] {android.R.attr.state_checked}, new int[] {}}, new int[] {ACCENT, SECONDARY}));
         add(body, enabled, 42);
-        TextView label = text("目标用户 UID", 13, SECONDARY);
+        TextView label = text("目标用户 UID（每行一个）", 13, SECONDARY);
         add(body, label, 28);
         uid = new EditText(this);
-        uid.setSingleLine(true);
+        uid.setSingleLine(false);
+        uid.setMinLines(3);
+        uid.setMaxLines(8);
         uid.setTextColor(TEXT);
         uid.setTextSize(21);
         uid.setHintTextColor(Color.rgb(106, 112, 125));
-        uid.setHint("输入数字 UID");
-        uid.setInputType(InputType.TYPE_CLASS_NUMBER);
-        uid.setFilters(new InputFilter[] {new InputFilter.LengthFilter(30)});
+        uid.setHint("每行输入一个数字 UID");
+        uid.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         uid.setBackgroundTintList(ColorStateList.valueOf(ACCENT));
         uid.setSelectAllOnFocus(false);
         uid.setPadding(dp(2), dp(14), dp(2), dp(14));
         uid.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         add(body, uid, 4);
         label.setLabelFor(uid.getId() == View.NO_ID ? assignId(uid) : uid.getId());
-        TextView hint = text("填写数字 UID，不是昵称、抖音号或 sec_uid。", 12, SECONDARY);
+        TextView hint = text("每行填写一个数字 UID，自动去空白和重复项。不是昵称、抖音号或 sec_uid。", 12, SECONDARY);
         hint.setLineSpacing(dp(4), 1f);
         add(body, hint, 10);
 
@@ -117,7 +118,7 @@ public final class MainActivity extends Activity {
         add(body, version, 34);
 
         SharedPreferences prefs = getSharedPreferences(ConfigProvider.PREFS, 0);
-        uid.setText(prefs.getString("uid", ""));
+        uid.setText(prefs.getString("uids", prefs.getString("uid", "")));
         enabled.setChecked(prefs.getBoolean("enabled", false));
         String accessError = grantDouyinReadAccess();
         if (accessError != null) feedback.setText(accessError);
@@ -150,18 +151,22 @@ public final class MainActivity extends Activity {
     }
 
     private void save() {
-        String value = uid.getText().toString().trim();
-        if ((enabled.isChecked() || !value.isEmpty()) && !FilterConfig.isValidUid(value)) {
-            uid.setError("请输入不以 0 开头的数字 UID，最多 30 位");
+        String value;
+        try {
+            value = FilterConfig.normalizeUids(uid.getText().toString());
+            if (enabled.isChecked() && value.isEmpty()) throw new IllegalArgumentException();
+        } catch (IllegalArgumentException invalid) {
+            uid.setError("每行输入一个不以 0 开头的数字 UID，每项最多 30 位；启用时至少填写一项");
             uid.requestFocus();
             return;
         }
         SharedPreferences prefs = getSharedPreferences(ConfigProvider.PREFS, 0);
-        prefs.edit().putString("uid", value).putBoolean("enabled", enabled.isChecked())
+        prefs.edit().putString("uids", value).remove("uid").putBoolean("enabled", enabled.isChecked())
             .putLong("revision", prefs.getLong("revision", 0L) + 1L).apply();
+        uid.setText(value);
         String accessError = grantDouyinReadAccess();
         feedback.setText(accessError != null ? "已保存。" + accessError : enabled.isChecked()
-                ? "已保存。重新打开评论区后，只展示这个 UID。" : "过滤已关闭。重新打开评论区恢复原始展示。");
+                ? "已保存。重新打开评论区后，展示任一目标用户。" : "过滤已关闭。重新打开评论区恢复原始展示。");
         feedback.setTextColor(ACCENT);
         uid.clearFocus();
         android.view.inputmethod.InputMethodManager keyboard = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
