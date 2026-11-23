@@ -39,7 +39,13 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     buildFeatures { buildConfig true }
-    testOptions { unitTests.includeAndroidResources = true }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            // Robolectric downloads Android runtime jars outside Gradle's repositories.
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+        }
+    }
     lint { abortOnError true }
 }
 
