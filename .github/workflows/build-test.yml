@@ -41,6 +41,19 @@ jobs:
           test -z "${ANDROID_KEYSTORE_PATH:-}"
           python3 -m unittest discover -s scripts -p 'test_bump_version.py' -v
           gradle --no-daemon --console=plain test assembleDebug assembleRelease lintRelease
+      - name: Verify signing gate with public and unsigned fixtures
+        run: |
+          set -euo pipefail
+          published="$RUNNER_TEMP/douyin-uid-filter-v0.1.0.apk"
+          curl --fail --location --max-time 60 \
+            'https://github.com/LIghtJUNction/douyin-uid-filter/releases/download/v0.1.0/douyin-uid-filter-v0.1.0.apk' \
+            --output "$published"
+          printf '%s  %s\n' 'e3f356f331c413644e98fa33a7cde6e59ad32dfb5e63924e88d7e92b516e8454' "$published" | sha256sum --check --status
+          python3 scripts/test_release_signer.py \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            --published "$published" \
+            --debug app/build/outputs/apk/debug/app-debug.apk \
+            --unsigned app/build/outputs/apk/release/app-release-unsigned.apk
       - name: Record complete test outcomes
         if: always()
         run: |

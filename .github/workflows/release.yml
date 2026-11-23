@@ -60,7 +60,7 @@ jobs:
           done
           python3 -m unittest discover -s scripts -p 'test_bump_version.py' -v
 
-      - name: Prepare version and release tag
+      - name: Prepare version metadata
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -92,20 +92,14 @@ jobs:
           fi
           python3 scripts/bump_version.py "${args[@]}"
           tag="$(python3 scripts/bump_version.py none | sed -n 's/^tag=//p')"
-          if ! git diff --quiet -- version.properties; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add version.properties
-            git commit -m "chore: release $tag" -m "Release-Run: $GITHUB_RUN_ID"
-          fi
           if git show-ref --verify --quiet "refs/tags/$tag"; then
+            git diff --quiet -- version.properties &&
             test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse HEAD)" || {
               echo 'This release tag already points at another commit. Choose a new version.' >&2
               exit 1
             }
             echo 'push_required=false' >> "$GITHUB_OUTPUT"
           else
-            git tag "$tag"
             echo 'push_required=true' >> "$GITHUB_OUTPUT"
           fi
 
@@ -167,6 +161,23 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
           gradle --no-daemon --console=plain test assembleRelease lintRelease
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          python3 scripts/check_release_signer.py \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            --apk app/build/outputs/apk/release/app-release.apk
+
+      - name: Commit validated version and create tag
+        if: github.event_name == 'workflow_dispatch' && steps.version.outputs.push_required == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- version.properties; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add version.properties
+            git commit -m "chore: release $RELEASE_TAG" -m "Release-Run: $GITHUB_RUN_ID"
+          fi
+          git tag "$RELEASE_TAG"
 
       - name: Push validated version and tag
         if: github.event_name == 'workflow_dispatch' && steps.version.outputs.push_required == 'true'
