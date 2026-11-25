@@ -50,7 +50,10 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    buildFeatures { buildConfig true }
+    buildFeatures {
+        buildConfig true
+        aidl true
+    }
     testOptions {
         unitTests.includeAndroidResources = true
         unitTests.all {

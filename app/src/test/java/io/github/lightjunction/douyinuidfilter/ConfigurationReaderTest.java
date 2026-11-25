@@ -7,6 +7,14 @@ public class ConfigurationReaderTest {
     private final FilterConfig enabled = new FilterConfig(true, "123", 1);
     private static FilterConfig denied() { throw new SecurityException("fixture"); }
 
+    @Test public void serviceConnectionRetriesImmediatelyAfterAnUnavailableRead() {
+        ConfigurationReader reader = new ConfigurationReader();
+        reader.read(50, () -> null);
+        assertEquals("unavailable", reader.state());
+        reader.invalidateRead();
+        assertTrue(reader.read(51, () -> new FilterConfig(true, "123", 3)).matches("123"));
+        assertEquals("enabled", reader.state());
+    }
     @Test public void freshProcessReadsPersistedSetting() {
         assertTrue(new ConfigurationReader().read(0, () -> enabled).enabled);
         assertTrue(new ConfigurationReader().read(0, () -> enabled).enabled);

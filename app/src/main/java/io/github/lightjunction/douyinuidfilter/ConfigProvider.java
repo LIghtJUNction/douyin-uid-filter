@@ -2,6 +2,7 @@ package io.github.lightjunction.douyinuidfilter;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
@@ -12,26 +13,30 @@ import android.os.Process;
 /** Only the module and the selected host can read configuration. External writes are rejected. */
 public final class ConfigProvider extends ContentProvider {
     public static final String TARGET = "com.ss.android.ugc.aweme";
-    public static final String AUTHORITY = "io.github.lightjunction.douyinuidfilter.settings";
+    public static final String AUTHORITY = BuildConfig.APPLICATION_ID + ".settings";
     public static final Uri URI = Uri.parse("content://" + AUTHORITY);
     public static final String PREFS = "filter";
     public static final String DIAGNOSTICS = "diagnostics";
 
     @Override public boolean onCreate() { return true; }
 
-    private void checkCaller() {
+    private static void checkCaller(Context context) {
         int caller = Binder.getCallingUid();
         if (caller == Process.myUid()) return;
-        String[] packages = getContext().getPackageManager().getPackagesForUid(caller);
+        String[] packages = context.getPackageManager().getPackagesForUid(caller);
         if (packages != null) for (String name : packages) if (TARGET.equals(name)) return;
         throw new SecurityException("Only the module and Douyin may access this provider");
     }
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
-        checkCaller();
+        return authorizedCall(getContext(), method, extras);
+    }
+
+    static Bundle authorizedCall(Context context, String method, Bundle extras) {
+        checkCaller(context);
         Bundle result = new Bundle();
         if ("get".equals(method)) {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS, 0);
+            SharedPreferences prefs = context.getSharedPreferences(PREFS, 0);
             result.putBoolean("enabled", prefs.getBoolean("enabled", false));
             String selected = prefs.getString("uids", prefs.getString("uid", ""));
             result.putString("uids", selected);
@@ -47,7 +52,7 @@ public final class ConfigProvider extends ContentProvider {
                     && !"cached".equals(configuration) && !"unavailable".equals(configuration)) {
                 configuration = "pending";
             }
-            getContext().getSharedPreferences(DIAGNOSTICS, 0).edit()
+            context.getSharedPreferences(DIAGNOSTICS, 0).edit()
                 .putString("configuration", configuration)
                 .putBoolean("ready", extras.getBoolean("ready", false))
                 .putString("version", version)
