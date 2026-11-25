@@ -26,11 +26,9 @@ final class ConfigChannel extends BroadcastReceiver {
         this.connected = connected;
         IntentFilter filter = new IntentFilter(ACTION);
         try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                context.registerReceiver(this, filter, PERMISSION, null, Context.RECEIVER_EXPORTED);
-            } else {
-                context.registerReceiver(this, filter, PERMISSION, null);
-            }
+            // Min SDK 27 supports the flags overload. Export flags were added in API 33.
+            int flags = Build.VERSION.SDK_INT >= 33 ? Context.RECEIVER_EXPORTED : 0;
+            context.registerReceiver(this, filter, PERMISSION, null, flags);
             Log.i("DouyinUidFilter", "Settings receiver ready");
         } catch (RuntimeException error) {
             Log.w("DouyinUidFilter", "Settings receiver unavailable: " + error.getClass().getSimpleName());
