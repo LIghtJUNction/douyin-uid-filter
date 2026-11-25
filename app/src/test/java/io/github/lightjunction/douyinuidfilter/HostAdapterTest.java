@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -59,6 +61,63 @@ public final class HostAdapterTest {
             assertEquals(TARGET, comment.user.uid);
             assertOnlyTargetComments(comment.replyComments);
         }
+    }
+
+    @Test public void decoderIgnoresNullOtherModelsAndEnvelopesBeforeReadingConfiguration()
+            throws ReflectiveOperationException {
+        DecodedPageProjection decoded = new DecodedPageProjection(adapter,
+                () -> { throw new AssertionError("Unrelated result requested configuration"); },
+                (page, config) -> { throw new AssertionError("Unrelated result was projected"); });
+        Object envelope = new Object() { public final CommentItemList data = new CommentItemList(); };
+        Comment otherModel = comment(TARGET, "101");
+
+        assertNull(decoded.apply(null));
+        assertSame(envelope, decoded.apply(envelope));
+        assertSame(otherModel, decoded.apply(otherModel));
+        assertSame(otherModel.replyComments, decoded.apply(otherModel.replyComments));
+    }
+
+    @Test public void nestedDecodersReuseProjectionForAnEquivalentConfiguration()
+            throws ReflectiveOperationException {
+        AtomicInteger notifications = new AtomicInteger();
+        CommentItemList source = page(20L, true, comment(TARGET, "101"), comment(OTHER, "102"));
+        DecodedPageProjection decoded = new DecodedPageProjection(adapter,
+                () -> new FilterConfig(true, TARGET, 1L), (input, selected) -> {
+                    assertSame(source, input);
+                    notifications.incrementAndGet();
+                });
+
+        CommentItemList selected = (CommentItemList) decoded.apply(source);
+        assertNotSame(source, selected);
+        assertEquals(Collections.singletonList("101"), ids(selected.items));
+        assertSame(selected, decoded.apply(selected));
+        assertEquals(1, notifications.get());
+    }
+
+    @Test public void decoderReprojectsChangedSelectionFromRawPageAndRestoresOriginalIdentity()
+            throws ReflectiveOperationException {
+        AtomicReference<FilterConfig> config = new AtomicReference<>(FilterConfig.DISABLED);
+        AtomicInteger projections = new AtomicInteger();
+        DecodedPageProjection decoded = new DecodedPageProjection(adapter, config::get,
+                (input, selected) -> projections.incrementAndGet());
+        CommentItemList source = page(0L, false, comment(TARGET, "101"), comment(OTHER, "102"));
+
+        assertSame(source, decoded.apply(source));
+        config.set(CONFIG);
+        CommentItemList first = (CommentItemList) decoded.apply(source);
+        config.set(new FilterConfig(true, OTHER, CONFIG.revision));
+        CommentItemList second = (CommentItemList) decoded.apply(first);
+        assertEquals(Collections.singletonList("102"), ids(second.items));
+        config.set(new FilterConfig(true, OTHER, CONFIG.revision + 1));
+        CommentItemList revised = (CommentItemList) decoded.apply(second);
+        assertNotSame(second, revised);
+        assertSame(revised, decoded.apply(revised));
+        config.set(FilterConfig.DISABLED);
+        assertSame(source, decoded.apply(revised));
+        assertSame(source, decoded.apply(first));
+        assertEquals(Arrays.asList("101", "102"), ids(source.items));
+        assertEquals(500L, source.total);
+        assertEquals(3, projections.get());
     }
 
     @Test public void emptyTailPagePreservesMatchesFromEarlierPageInSameSession()

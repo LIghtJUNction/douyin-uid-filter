@@ -128,30 +128,44 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
             });
             hooks++;
 
-            // Project parsed models too: some host paths read public fields directly.
+            // Some comment screens consume the decoded fields before they consult model getters.
+            DecodedPageProjection decoded = new DecodedPageProjection(adapter, this::configuration,
+                    (page, selected) -> Log.i(TAG, "page filtered: loaded=" + adapter.items(page).size()
+                            + " visible=" + adapter.visibleCount(page, selected)));
+            XC_MethodHook decodedPage = new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable()) return;
+                    Object page = param.getResult();
+                    try {
+                        Object result = decoded.apply(page);
+                        if (result != page) param.setResult(result);
+                    } catch (Throwable exception) {
+                        param.setThrowable(new IllegalStateException("Comment filtering failed"));
+                        error("parsed response", exception);
+                    }
+                }
+            };
             Class<?> gson = XposedHelpers.findClassIfExists("com.google.gson.Gson", loader);
             if (gson != null) {
                 for (Method method : gson.getDeclaredMethods()) {
                     if (!method.getName().equals("fromJson") || method.getReturnType() == void.class) continue;
-                    XposedBridge.hookMethod(method, new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam param) {
-                            if (param.hasThrowable() || !adapter.listType.isInstance(param.getResult())) return;
-                            FilterConfig selected = configuration();
-                            if (!selected.enabled) return;
-                            try {
-                                Object source = param.getResult();
-                                Object projected = adapter.projectResponse(source, selected);
-                                param.setResult(projected);
-                                Log.i(TAG, "page filtered: loaded=" + adapter.items(source).size()
-                                        + " visible=" + adapter.visibleCount(source, selected));
-                            } catch (Throwable exception) {
-                                param.setThrowable(new IllegalStateException("Comment filtering failed"));
-                                error("parsed response", exception);
-                            }
-                        }
-                    });
+                    XposedBridge.hookMethod(method, decodedPage);
                     hooks++;
                 }
+            }
+            // Douyin 41.2.0's Compose panel uses Gson's streaming adapter directly.
+            Class<?> decoder = XposedHelpers.findClassIfExists(
+                    "com.google.gson.internal.bind.OptReflectiveTypeAdapterFactoryV2$Adapter", loader);
+            Class<?> reader = XposedHelpers.findClassIfExists("com.google.gson.stream.JsonReader", loader);
+            Class<?> typeAdapter = XposedHelpers.findClassIfExists("com.google.gson.TypeAdapter", loader);
+            if (decoder != null && reader != null && typeAdapter != null && typeAdapter.isAssignableFrom(decoder)) {
+                try {
+                    Method read = decoder.getMethod("read", reader);
+                    if (read.getDeclaringClass() == decoder && read.getReturnType() == Object.class) {
+                        XposedBridge.hookMethod(read, decodedPage);
+                        hooks++;
+                    }
+                } catch (NoSuchMethodException unavailable) { error("stream decoder", unavailable); }
             }
             Class<?> requests = XposedHelpers.findClassIfExists(
                     "com.ss.android.ugc.aweme.comment.data.list.CommentListPageNetRequest", loader);
