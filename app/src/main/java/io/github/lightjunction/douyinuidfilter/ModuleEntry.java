@@ -29,6 +29,7 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
     private String hostVersion = "unknown";
     private Context context;
     private HostAdapter adapter;
+    private ConfigChannel settings;
     private final WeakIdentityMap<FilterSession> requestSessions = new WeakIdentityMap<>();
     private long lastError;
 
@@ -39,22 +40,30 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
             @Override protected void afterHookedMethod(MethodHookParam hook) {
                 if (!installed.compareAndSet(false, true)) return;
                 context = (Context) hook.args[0];
+                settings = new ConfigChannel(context, ModuleEntry.this::onConfigConnected);
                 install(context.getClassLoader());
             }
         });
     }
 
-    private synchronized FilterConfig configuration() {
-        FilterConfig selected = configurationReader.read(SystemClock.elapsedRealtime(), () -> {
+    private synchronized void onConfigConnected(FilterConfig fresh) {
+        configurationReader.invalidateRead();
+        configuration(() -> fresh);
+    }
+
+    private FilterConfig configuration() {
+        return configuration(() -> {
             try {
-                Bundle values = context.getContentResolver().call(ConfigProvider.URI, "get", null, null);
-                if (values == null) throw new IllegalStateException("Configuration provider returned no data");
-                return new FilterConfig(values.getBoolean("enabled"), values.getString("uids", values.getString("uid", "")), values.getLong("revision"));
+                return ConfigChannel.decode(settings.call("get", null));
             } catch (RuntimeException exception) {
                 error("configuration", exception);
                 throw exception;
             }
         });
+    }
+
+    private synchronized FilterConfig configuration(ConfigurationReader.Source source) {
+        FilterConfig selected = configurationReader.read(SystemClock.elapsedRealtime(), source);
         String state = configurationReader.state();
         if (!state.equals(reportedConfiguration)) {
             reportedConfiguration = state;
@@ -207,7 +216,7 @@ public final class ModuleEntry implements IXposedHookLoadPackage {
             Bundle data = new Bundle(); data.putBoolean("ready", ready);
             data.putString("configuration", configurationReader.state());
             data.putInt("hooks", hooks); data.putString("version", version);
-            context.getContentResolver().call(ConfigProvider.URI, "report", null, data);
+            settings.call("report", data);
         } catch (RuntimeException exception) { error("module status", exception); }
     }
 

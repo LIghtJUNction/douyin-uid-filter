@@ -25,5 +25,7 @@ final class ConfigurationReader {
         return config;
     }
 
+    synchronized void invalidateRead() { attempted = false; }
+
     synchronized String state() { return state; }
 }

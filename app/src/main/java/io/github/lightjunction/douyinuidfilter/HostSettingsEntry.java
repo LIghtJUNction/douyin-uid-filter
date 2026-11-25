@@ -20,8 +20,7 @@ final class HostSettingsEntry {
         item.setOnMenuItemClickListener(selected -> {
             try {
                 activity.startActivity(new Intent().setClassName(
-                        "io.github.lightjunction.douyinuidfilter",
-                        "io.github.lightjunction.douyinuidfilter.MainActivity"));
+                        BuildConfig.APPLICATION_ID, MainActivity.class.getName()));
             } catch (ActivityNotFoundException | SecurityException unavailable) {
                 Toast.makeText(activity, "无法打开 UID 评论过滤，请从桌面打开模块设置。", Toast.LENGTH_SHORT).show();
             }

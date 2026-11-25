@@ -32,9 +32,12 @@ public final class MainActivity extends Activity {
     private Switch enabled;
     private TextView feedback;
     private TextView status;
+    private ConfigHandoff handoff;
+    private boolean openingHost;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        handoff = new ConfigHandoff(this);
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
 
@@ -107,7 +110,7 @@ public final class MainActivity extends Activity {
         open.setOnClickListener(view -> openDouyin());
         add(body, open, 18);
 
-        TextView usage = text("首次使用\n在 LSPosed / Vector 中启用本模块，作用域选择「抖音」，再强行停止并重新打开抖音。手机重启后，先打开一次本模块，再打开抖音。", 13, SECONDARY);
+        TextView usage = text("首次使用\n在 LSPosed / Vector 中启用本模块，作用域选择「抖音」，再强行停止并重新打开抖音。重启抖音或手机后，可从本页点「打开抖音」重新连接设置。", 13, SECONDARY);
         usage.setLineSpacing(dp(7), 1f);
         add(body, usage, 28);
         TextView privacy = text("仅本地展示过滤 · 无联网权限\n无匹配时显示 0；后续加载到的评论也会继续过滤。", 12, SECONDARY);
@@ -129,6 +132,7 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (status == null) return;
+        handoff.publish(false);
         SharedPreferences diagnostics = getSharedPreferences(ConfigProvider.DIAGNOSTICS, 0);
         long last = diagnostics.getLong("last_seen", 0L);
         if (last == 0L) {
@@ -164,6 +168,7 @@ public final class MainActivity extends Activity {
         prefs.edit().putString("uids", value).remove("uid").putBoolean("enabled", enabled.isChecked())
             .putLong("revision", prefs.getLong("revision", 0L) + 1L).apply();
         uid.setText(value);
+        handoff.publish(false);
         String accessError = grantDouyinReadAccess();
         feedback.setText(accessError != null ? "已保存。" + accessError : enabled.isChecked()
                 ? "已保存。重新打开评论区后，展示任一目标用户。" : "过滤已关闭。重新打开评论区恢复原始展示。");
@@ -177,9 +182,21 @@ public final class MainActivity extends Activity {
         Intent intent = getPackageManager().getLaunchIntentForPackage(ConfigProvider.TARGET);
         if (intent == null) { Toast.makeText(this, "尚未安装抖音", Toast.LENGTH_SHORT).show(); return; }
         String accessError = grantDouyinReadAccess();
-        if (accessError != null) { Toast.makeText(this, accessError, Toast.LENGTH_SHORT).show(); return; }
-        try { startActivity(intent); }
+        if (accessError != null) Toast.makeText(this, accessError, Toast.LENGTH_SHORT).show();
+        try {
+            startActivity(intent);
+            openingHost = true;
+            handoff.publish(true);
+        }
         catch (ActivityNotFoundException exception) { Toast.makeText(this, "无法打开抖音", Toast.LENGTH_SHORT).show(); }
+    }
+
+    @Override protected void onStop() {
+        super.onStop();
+        if (openingHost) {
+            openingHost = false;
+            handoff.publish(true);
+        }
     }
 
     /** Makes this provider visible to the host on Android 11+, without granting write access. */
